@@ -19,6 +19,25 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 button, input, select { font: inherit; }
 button { color: inherit; }
 
+.login-shell { min-height: 100vh; display: grid; place-items: center; padding: 28px; background: radial-gradient(circle at 20% 10%, #e4eee7 0, transparent 34%), radial-gradient(circle at 88% 88%, #f0dfce 0, transparent 30%), var(--paper); }
+.login-card { width: min(100%, 440px); padding: 42px; border: 1px solid var(--line); border-radius: 24px; background: rgba(251,251,247,.94); box-shadow: 0 24px 70px rgba(28,42,35,.12); }
+.login-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 42px; }
+.login-brand > div { display: flex; flex-direction: column; line-height: 1.1; }
+.login-brand b { font-family: serif; font-size: 20px; letter-spacing: .18em; }
+.login-brand div span { margin-top: 5px; color: var(--muted); font-size: 10px; letter-spacing: .32em; }
+.login-card h1 { margin: 0; font-family: "Songti SC", "Noto Serif SC", serif; font-size: 36px; font-weight: 600; letter-spacing: -.03em; }
+.login-copy { margin: 15px 0 28px; color: var(--muted); font-size: 14px; line-height: 1.7; }
+.login-card form { display: flex; flex-direction: column; }
+.login-card form label { margin-bottom: 8px; color: var(--muted); font-size: 12px; font-weight: 600; }
+.login-card form input { width: 100%; height: 50px; padding: 0 15px; border: 1px solid #cfd6d1; border-radius: 11px; outline: 0; background: #fff; }
+.login-card form input:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(28,90,67,.1); }
+.login-card form button { height: 50px; margin-top: 14px; border: 0; border-radius: 11px; background: var(--green); color: #fff; cursor: pointer; font-weight: 700; }
+.login-card form button:disabled { opacity: .55; cursor: wait; }
+.login-error { margin: 9px 0 0; color: #a64e38; font-size: 12px; }
+.login-card > small { display: block; margin-top: 22px; color: #89918d; font-size: 10px; text-align: center; }
+.login-loading { min-height: 210px; display: flex; align-items: center; justify-content: center; flex-direction: column; color: var(--muted); }
+.login-loading p { margin: 18px 0 0; }
+
 .app-shell { min-height: 100vh; max-width: 1500px; margin: 0 auto; padding: 0 44px 28px; }
 .topbar { height: 84px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
 .brand { display: flex; align-items: center; gap: 12px; }
@@ -38,6 +57,8 @@ button { color: inherit; }
 .refresh-button { width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 50%; background: transparent; cursor: pointer; font-size: 20px; line-height: 1; }
 .refresh-button:hover { background: #fff; }
 .refresh-button:disabled { opacity: .45; cursor: wait; }
+.lock-button { height: 34px; padding: 0 13px; border: 1px solid var(--line); border-radius: 99px; background: transparent; color: var(--muted); cursor: pointer; font-size: 11px; }
+.lock-button:hover { background: #fff; color: var(--ink); }
 
 .hero { min-height: 268px; display: grid; grid-template-columns: 1.5fr .5fr; gap: 40px; align-items: end; padding: 52px 0 46px; }
 .eyebrow { margin: 0 0 14px; color: var(--green); font-size: 10px; font-weight: 700; letter-spacing: .2em; }
@@ -111,7 +132,7 @@ footer { min-height: 70px; display: flex; align-items: center; justify-content: 
 }
 
 @media (max-width: 560px) {
-  .app-shell { padding: 0 12px 20px; }.topbar { height: 70px; }.brand span, .cloud-state { display: none; }.hero { min-height: 0; padding: 34px 6px; }.hero h1 { font-size: 39px; }.hero-status { padding-left: 16px; }.metrics article { min-height: 88px; padding: 14px 10px; }.metric-icon { width: 36px; height: 36px; }.metrics b { font-size: 26px; }.metrics small { font-size: 10px; }.warehouse-panel { margin-top: 24px; border-radius: 14px; }.panel-head { padding: 22px 18px 16px; }.mode-tabs { padding: 0 18px; gap: 18px; }.filters { padding: 10px 18px; flex-wrap: wrap; }.filters > span { width: 100%; margin-left: 0; }.entity-row { grid-template-columns: 46px minmax(0,1fr) 74px; padding: 14px 16px; gap: 10px; }.thumb { width: 44px; height: 44px; }.entity-end strong { font-size: 20px; }.detail-panel { padding: 22px 18px; }footer { padding: 0 4px; }
+  .login-shell { padding: 16px; }.login-card { padding: 30px 24px; border-radius: 18px; }.login-brand { margin-bottom: 34px; }.login-card h1 { font-size: 31px; }.app-shell { padding: 0 12px 20px; }.topbar { height: 70px; }.brand span, .cloud-state { display: none; }.topbar-meta { gap: 9px; }.hero { min-height: 0; padding: 34px 6px; }.hero h1 { font-size: 39px; }.hero-status { padding-left: 16px; }.metrics article { min-height: 88px; padding: 14px 10px; }.metric-icon { width: 36px; height: 36px; }.metrics b { font-size: 26px; }.metrics small { font-size: 10px; }.warehouse-panel { margin-top: 24px; border-radius: 14px; }.panel-head { padding: 22px 18px 16px; }.mode-tabs { padding: 0 18px; gap: 18px; }.filters { padding: 10px 18px; flex-wrap: wrap; }.filters > span { width: 100%; margin-left: 0; }.entity-row { grid-template-columns: 46px minmax(0,1fr) 74px; padding: 14px 16px; gap: 10px; }.thumb { width: 44px; height: 44px; }.entity-end strong { font-size: 20px; }.detail-panel { padding: 22px 18px; }footer { padding: 0 4px; }
 }
 
 @media (prefers-reduced-motion: reduce) { .loader { animation: none; } }

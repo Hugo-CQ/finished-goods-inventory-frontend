@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 const SUPABASE_URL = "https://dkfqdimwcuqlbybyesbq.supabase.co";
 const SUPABASE_KEY = "sb_publishable_4sIy9A-kgfK96qH7_hdWdw_6wL5z-Ps";
 const HOUSEHOLD_EMAIL = "home-inventory@wuno.cn";
-const HOUSEHOLD_PASSWORD = "HomeBeacon#2026!";
+const SESSION_STORAGE_KEY = "home-inventory-access-token";
 
 type StorageRack = {
   rackCode: string;
@@ -154,39 +154,41 @@ function matchesQuery(parts: Array<string | number | undefined>, query: string) 
 export default function Home() {
   const [state, setState] = useState<InventoryState | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string>();
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [password, setPassword] = useState("");
+  const [authenticating, setAuthenticating] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [restoringSession, setRestoringSession] = useState(true);
   const [mode, setMode] = useState<ViewMode>("item");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("全部");
   const [status, setStatus] = useState("全部");
   const [selected, setSelected] = useState<SelectedEntity>(null);
 
-  const loadWarehouse = useCallback(async () => {
+  const loadWarehouse = useCallback(async (token: string) => {
     setLoading(true);
     setError("");
     try {
-      const authResponse = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-        method: "POST",
-        headers: { apikey: SUPABASE_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify({ email: HOUSEHOLD_EMAIL, password: HOUSEHOLD_PASSWORD }),
-      });
-      const auth = (await authResponse.json()) as { access_token?: string; msg?: string; error_description?: string };
-      if (!authResponse.ok || !auth.access_token) {
-        throw new Error(auth.msg || auth.error_description || "家庭云端连接失败");
-      }
-
       const snapshotResponse = await fetch(
         `${SUPABASE_URL}/rest/v1/home_inventory_snapshots?select=payload,revision,updated_at&limit=1`,
         {
           headers: {
             apikey: SUPABASE_KEY,
-            Authorization: `Bearer ${auth.access_token}`,
+            Authorization: `Bearer ${token}`,
             Accept: "application/json",
           },
           cache: "no-store",
         },
       );
+      if (snapshotResponse.status === 401 || snapshotResponse.status === 403) {
+        sessionStorage.removeItem(SESSION_STORAGE_KEY);
+        setAccessToken(null);
+        setAuthError("验证已过期，请重新输入密码。");
+        setState(null);
+        return;
+      }
       if (!snapshotResponse.ok) throw new Error("无法读取家庭仓库数据");
       const rows = (await snapshotResponse.json()) as SnapshotRow[];
       setState(rows[0]?.payload || { boxes: [], racks: [], binds: [], loans: [] });
@@ -200,8 +202,51 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    void loadWarehouse();
+    const restoredToken = sessionStorage.getItem(SESSION_STORAGE_KEY);
+    if (!restoredToken) {
+      setRestoringSession(false);
+      return;
+    }
+    setAccessToken(restoredToken);
+    void loadWarehouse(restoredToken).finally(() => setRestoringSession(false));
   }, [loadWarehouse]);
+
+  async function unlockWarehouse(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!password || authenticating) return;
+    setAuthenticating(true);
+    setAuthError("");
+    try {
+      const authResponse = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+        method: "POST",
+        headers: { apikey: SUPABASE_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ email: HOUSEHOLD_EMAIL, password }),
+      });
+      const auth = (await authResponse.json()) as { access_token?: string };
+      if (!authResponse.ok || !auth.access_token) {
+        throw new Error("密码不正确，请重试。");
+      }
+      sessionStorage.setItem(SESSION_STORAGE_KEY, auth.access_token);
+      setAccessToken(auth.access_token);
+      setPassword("");
+      await loadWarehouse(auth.access_token);
+    } catch (caught) {
+      setAuthError(caught instanceof Error ? caught.message : "验证失败，请稍后重试。");
+    } finally {
+      setAuthenticating(false);
+    }
+  }
+
+  function lockWarehouse() {
+    sessionStorage.removeItem(SESSION_STORAGE_KEY);
+    setAccessToken(null);
+    setAuthenticating(false);
+    setLoading(false);
+    setState(null);
+    setUpdatedAt(undefined);
+    setError("");
+    setAuthError("");
+  }
 
   const boxes = state?.boxes || [];
   const racks = state?.racks || [];
@@ -242,6 +287,39 @@ export default function Home() {
 
   const visibleCount = mode === "item" ? filteredItems.length : mode === "container" ? filteredBoxes.length : filteredRacks.length;
 
+  if (restoringSession) {
+    return <main className="login-shell"><div className="login-card login-loading"><div className="loader" /><p>正在恢复安全访问…</p></div></main>;
+  }
+
+  if (!accessToken) {
+    return (
+      <main className="login-shell">
+        <section className="login-card" aria-labelledby="login-title">
+          <div className="login-brand"><span className="brand-mark" aria-hidden="true"><i /></span><div><b>航标</b><span>家庭仓库</span></div></div>
+          <p className="eyebrow">PRIVATE HOME INVENTORY</p>
+          <h1 id="login-title">进入家庭仓库</h1>
+          <p className="login-copy">请输入家庭访问密码。账号已固定，无需填写用户名。</p>
+          <form onSubmit={unlockWarehouse}>
+            <label htmlFor="household-password">访问密码</label>
+            <input
+              id="household-password"
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="current-password"
+              autoFocus
+              placeholder="输入访问密码"
+              aria-describedby={authError ? "password-error" : undefined}
+            />
+            {authError && <p className="login-error" id="password-error" role="alert">{authError}</p>}
+            <button type="submit" disabled={!password || authenticating}>{authenticating ? "正在验证…" : "验证并进入"}</button>
+          </form>
+          <small>验证由 Supabase Auth 完成 · 网页端仅供查看</small>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -254,9 +332,10 @@ export default function Home() {
           <span className={`cloud-state ${error ? "offline" : ""}`}>
             <i />{loading ? "正在同步" : error ? "连接异常" : "云端已连接"}
           </span>
-          <button className="refresh-button" onClick={() => void loadWarehouse()} disabled={loading} aria-label="刷新云端数据">
+          <button className="refresh-button" onClick={() => void loadWarehouse(accessToken)} disabled={loading} aria-label="刷新云端数据">
             ↻
           </button>
+          <button className="lock-button" onClick={lockWarehouse}>锁定</button>
         </div>
       </header>
 
@@ -313,7 +392,7 @@ export default function Home() {
         {loading ? (
           <div className="empty-state"><div className="loader" /><h3>正在读取家庭仓库</h3><p>连接固定账号并同步最新快照。</p></div>
         ) : error ? (
-          <div className="empty-state error-state"><span>!</span><h3>{error}</h3><p>请检查网络后重新加载。</p><button onClick={() => void loadWarehouse()}>重新加载</button></div>
+          <div className="empty-state error-state"><span>!</span><h3>{error}</h3><p>请检查网络后重新加载。</p><button onClick={() => void loadWarehouse(accessToken)}>重新加载</button></div>
         ) : visibleCount === 0 ? (
           <div className="empty-state"><span>⌂</span><h3>{state && items.length + boxes.length + racks.length === 0 ? "云端仓库还是空的" : "没有匹配结果"}</h3><p>{state && items.length + boxes.length + racks.length === 0 ? "请先在 iPhone APP 的设置中上传本机数据。" : "换一个关键词或清除筛选后再试。"}</p></div>
         ) : (
