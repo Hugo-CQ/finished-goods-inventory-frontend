@@ -2,17 +2,31 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("warehouse client remains read-only", async () => {
+test("warehouse client authenticates and uses versioned metadata sync", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 
   assert.match(page, /仓库管理/);
-  assert.match(page, /只读模式/);
+  assert.match(page, /可编辑/);
   assert.match(page, /auth\/v1\/token\?grant_type=password/);
   assert.match(page, /访问密码/);
-  assert.doesNotMatch(page, /HomeBeacon#2026!/);
-  assert.match(page, /method:\s*"POST"/);
+  assert.doesNotMatch(page, /HOUSEHOLD_PASSWORD|static\s+(?:let|const)\s+password/i);
+  assert.match(page, /home_inventory_get_state/);
+  assert.match(page, /home_inventory_commit_state/);
+  assert.match(page, /expected_revision/);
+  assert.match(page, /SYNC_CONFLICT/);
+  assert.match(page, /storage\/v1\/object\/authenticated\/home-inventory-photos/);
+  assert.doesNotMatch(page, /rest\/v1\/home_inventory_snapshots/);
   assert.doesNotMatch(page, /method:\s*"(?:PUT|PATCH|DELETE)"/);
-  assert.doesNotMatch(page, /rest\/v1\/home_inventory_snapshots[\s\S]{0,180}method:\s*"POST"/);
+});
+
+test("warehouse detail supports safe edits", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+
+  assert.match(page, /function ItemEditor/);
+  assert.match(page, /function ContainerEditor/);
+  assert.match(page, /function RackEditor/);
+  assert.match(page, /保存到云端/);
+  assert.match(page, /层位编号不在网页端修改/);
 });
 
 test("starter preview is fully removed", async () => {
