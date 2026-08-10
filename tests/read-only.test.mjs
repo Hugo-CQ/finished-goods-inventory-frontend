@@ -26,3 +26,14 @@ test("starter preview is fully removed", async () => {
   assert.doesNotMatch(layout, /Starter Project|codex-preview/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 });
+
+test("rack view mirrors the native rack, layer, container hierarchy", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+
+  assert.match(page, /function rackGroupCode/);
+  assert.match(page, /className="rack-group"/);
+  assert.match(page, /className="rack-layer"/);
+  assert.match(page, /className="rack-container-row"/);
+  assert.match(page, /aria-expanded=\{groupExpanded\}/);
+  assert.match(page, /aria-expanded=\{layerExpanded\}/);
+});

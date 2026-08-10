@@ -13,6 +13,12 @@ type StorageRack = {
   updatedAt?: string;
 };
 
+type RackGroup = {
+  groupCode: string;
+  name: string;
+  layers: StorageRack[];
+};
+
 type InventoryBox = {
   boxCode: string;
   displayName?: string;
@@ -151,6 +157,47 @@ function matchesQuery(parts: Array<string | number | undefined>, query: string) 
   return parts.join(" ").toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
 }
 
+function compactRackCode(value: string) {
+  return value.toLocaleUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function rackGroupCode(value: string) {
+  const code = compactRackCode(value);
+  return code.length === 4 ? code.slice(0, 3) : code || value;
+}
+
+function rackLayerNumber(value: string) {
+  const code = compactRackCode(value);
+  return code.length === 4 ? Number(code.slice(-1)) || 0 : 0;
+}
+
+function displayRackCode(value: string) {
+  const code = compactRackCode(value);
+  return code.length === 4 ? `${code.slice(0, 1)}-${code.slice(1, 3)}-${code.slice(3)}` : value;
+}
+
+function baseRackName(rack: StorageRack) {
+  const name = rack.name?.trim();
+  if (!name) return `装载架 ${rackGroupCode(rack.rackCode)}`;
+  const layer = rackLayerNumber(rack.rackCode);
+  return layer ? name.replace(new RegExp(`\\s+${layer}层$`), "").trim() : name;
+}
+
+function groupRacks(racks: StorageRack[]) {
+  const groups = new Map<string, StorageRack[]>();
+  racks.forEach((rack) => {
+    const code = rackGroupCode(rack.rackCode);
+    groups.set(code, [...(groups.get(code) || []), rack]);
+  });
+  return Array.from(groups, ([groupCode, layers]): RackGroup => ({
+    groupCode,
+    name: baseRackName(layers[0]),
+    layers: layers.toSorted((left, right) =>
+      rackLayerNumber(left.rackCode) - rackLayerNumber(right.rackCode) || left.rackCode.localeCompare(right.rackCode),
+    ),
+  })).toSorted((left, right) => left.groupCode.localeCompare(right.groupCode));
+}
+
 export default function Home() {
   const [state, setState] = useState<InventoryState | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string>();
@@ -166,6 +213,8 @@ export default function Home() {
   const [category, setCategory] = useState("全部");
   const [status, setStatus] = useState("全部");
   const [selected, setSelected] = useState<SelectedEntity>(null);
+  const [expandedRackGroups, setExpandedRackGroups] = useState<Record<string, boolean>>({});
+  const [expandedRackLayers, setExpandedRackLayers] = useState<Record<string, boolean>>({});
 
   const loadWarehouse = useCallback(async (token: string) => {
     setLoading(true);
@@ -267,6 +316,7 @@ export default function Home() {
     () => Array.from(new Set(items.map((item) => item.status).filter(Boolean) as string[])).sort(),
     [items],
   );
+  const rackGroups = groupRacks(racks);
 
   const filteredItems = items.filter(
     (item) =>
@@ -283,9 +333,20 @@ export default function Home() {
       query,
     ),
   );
-  const filteredRacks = racks.filter((rack) => matchesQuery([rack.name, rack.rackCode], query));
+  const filteredRackGroups = rackGroups.filter((group) => {
+    const groupBoxes = boxes.filter((box) => box.rackCode && rackGroupCode(box.rackCode) === group.groupCode);
+    return matchesQuery(
+      [
+        group.name,
+        group.groupCode,
+        ...group.layers.flatMap((rack) => [rack.name, rack.rackCode, displayRackCode(rack.rackCode)]),
+        ...groupBoxes.flatMap((box) => [box.displayName, box.boxCode, box.note]),
+      ],
+      query,
+    );
+  });
 
-  const visibleCount = mode === "item" ? filteredItems.length : mode === "container" ? filteredBoxes.length : filteredRacks.length;
+  const visibleCount = mode === "item" ? filteredItems.length : mode === "container" ? filteredBoxes.length : filteredRackGroups.length;
 
   if (restoringSession) {
     return <main className="login-shell"><div className="login-card login-loading"><div className="loader" /><p>正在恢复安全访问…</p></div></main>;
@@ -371,7 +432,7 @@ export default function Home() {
 
         <div className="mode-tabs" role="tablist" aria-label="仓库视图">
           {([
-            ["rack", "装载架", racks.length],
+            ["rack", "装载架", rackGroups.length],
             ["container", "容器", boxes.length],
             ["item", "物品", items.length],
           ] as const).map(([value, label, count]) => (
@@ -413,11 +474,55 @@ export default function Home() {
                   <span className="thumb box">▣</span><span className="entity-main"><b>{box.displayName || containerTypes[box.containerTypeRaw || ""] || "未命名容器"}</b><small>{box.boxCode} · {contentCategories[box.contentCodeRaw || ""] || "未分类"}</small><em>{locationOf(box)}</em></span><span className="entity-end"><strong>{count}<small>种</small></strong><i>{box.loadPercent || 0}% 装载</i></span>
                 </button>;
               })}
-              {mode === "rack" && filteredRacks.map((rack) => {
-                const rackBoxes = boxes.filter((box) => box.rackCode === rack.rackCode).length;
-                return <button className="entity-row" key={rack.rackCode} onClick={() => setSelected({ type: "rack", value: rack })}>
-                  <span className="thumb rack">▤</span><span className="entity-main"><b>{rack.name || `装载架 ${rack.rackCode}`}</b><small>{rack.rackCode}</small><em>{rackBoxes ? `${rackBoxes} 个容器位于此处` : "当前没有绑定容器"}</em></span><span className="entity-end"><strong>{rackBoxes}<small>箱</small></strong><i>已归档</i></span>
-                </button>;
+              {mode === "rack" && filteredRackGroups.map((group) => {
+                const groupBoxCount = boxes.filter((box) => box.rackCode && rackGroupCode(box.rackCode) === group.groupCode).length;
+                const groupExpanded = Boolean(expandedRackGroups[group.groupCode]) || Boolean(query.trim());
+                return <section className="rack-group" key={group.groupCode}>
+                  <button
+                    className="rack-group-header"
+                    type="button"
+                    aria-expanded={groupExpanded}
+                    aria-controls={`rack-group-${group.groupCode}`}
+                    onClick={() => setExpandedRackGroups((current) => ({ ...current, [group.groupCode]: !groupExpanded }))}
+                  >
+                    <span className="thumb rack">▤</span>
+                    <span className="entity-main"><b>{group.name}</b><small>{group.groupCode} · {group.layers.length} 层</small><em>{groupBoxCount ? `${groupBoxCount} 个容器位于此货架` : "当前没有绑定容器"}</em></span>
+                    <span className="rack-summary"><strong>{group.layers.length}<small>层</small></strong><i className="tree-chevron" aria-hidden="true">⌄</i></span>
+                  </button>
+                  {groupExpanded && <div className="rack-layers" id={`rack-group-${group.groupCode}`}>
+                    {group.layers.map((rack) => {
+                      const layerBoxes = boxes.filter((box) => box.rackCode === rack.rackCode);
+                      const layerExpanded = Boolean(expandedRackLayers[rack.rackCode]) || Boolean(query.trim());
+                      return <div className="rack-layer" key={rack.rackCode}>
+                        <button
+                          className="rack-layer-header"
+                          type="button"
+                          aria-expanded={layerExpanded}
+                          aria-controls={`rack-layer-${rack.rackCode}`}
+                          onClick={() => {
+                            setSelected({ type: "rack", value: rack });
+                            setExpandedRackLayers((current) => ({ ...current, [rack.rackCode]: !layerExpanded }));
+                          }}
+                        >
+                          <span className="layer-line" aria-hidden="true" />
+                          <span className="layer-badge">{rackLayerNumber(rack.rackCode) || "–"}</span>
+                          <span className="entity-main"><b>{rack.name || `${rackLayerNumber(rack.rackCode)} 层`}</b><small>{displayRackCode(rack.rackCode)}</small></span>
+                          <span className="layer-count">{layerBoxes.length} 个容器 <i className="tree-chevron" aria-hidden="true">⌄</i></span>
+                        </button>
+                        {layerExpanded && <div className="layer-containers" id={`rack-layer-${rack.rackCode}`}>
+                          {layerBoxes.length ? layerBoxes.map((box) => {
+                            const itemCount = items.filter((item) => item.boxCode === box.boxCode).length;
+                            return <button className="rack-container-row" type="button" key={box.boxCode} onClick={() => setSelected({ type: "container", value: box })}>
+                              <span className="container-branch" aria-hidden="true">└</span>
+                              <span className="entity-main"><b>{box.displayName || containerTypes[box.containerTypeRaw || ""] || "未命名容器"}</b><small>{box.boxCode} · {contentCategories[box.contentCodeRaw || ""] || "未分类"}</small></span>
+                              <span>{itemCount} 种物品</span>
+                            </button>;
+                          }) : <p className="empty-layer">这一层还没有容器</p>}
+                        </div>}
+                      </div>;
+                    })}
+                  </div>}
+                </section>;
               })}
             </div>
             <aside className="detail-panel">
