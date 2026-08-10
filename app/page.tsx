@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @next/next/no-img-element -- authenticated Storage photos use short-lived blob URLs */
 
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
@@ -287,7 +288,7 @@ export default function Home() {
   useEffect(() => {
     if (!accessToken) return;
     const checkForUpdates = async () => {
-      if (document.visibilityState !== "visible" || saving || conflict) return;
+      if (document.visibilityState !== "visible" || saving || conflict || document.querySelector(".entity-editor")) return;
       try {
         const response = await fetch(
           `${SUPABASE_URL}/rest/v1/home_inventory_sync_state?select=revision,updated_at&limit=1`,
@@ -595,7 +596,7 @@ export default function Home() {
                 const box = boxes.find((value) => value.boxCode === item.boxCode);
                 const low = item.lowStockThreshold !== undefined && (item.quantity || 0) <= item.lowStockThreshold;
                 return <button className="entity-row" key={item.id} onClick={() => setSelected({ type: "item", value: item })}>
-                  <span className="thumb">{photoSource(item.photoData) ? <img src={photoSource(item.photoData)} alt="" /> : "◇"}</span>
+                  <span className="thumb">◇</span>
                   <span className="entity-main"><b>{itemName(item)}</b><small>{[item.spec, item.category].filter(Boolean).join(" · ") || "未分类"}</small><em>{box ? `${box.displayName || box.boxCode} · ${locationOf(box)}` : item.shelfCode || "未指定容器"}</em></span>
                   <span className="entity-end"><strong>{item.quantity || 0}<small>{item.unit || "件"}</small></strong><i className={low ? "warn" : ""}>{low ? "库存偏低" : item.status || "备用"}</i></span>
                 </button>;
