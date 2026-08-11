@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "航标 · 家庭仓库",
-  description: "家庭物品、容器与装载架的只读仓库管理视图。",
+  description: "家庭物品、容器与装载架的云端仓库管理工作台。",
   openGraph: {
     title: "航标 · 家庭仓库",
     description: "家的每一件东西，都有清晰坐标。",

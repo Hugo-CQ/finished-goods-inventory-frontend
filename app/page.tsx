@@ -484,11 +484,22 @@ export default function Home() {
   if (!accessToken) {
     return (
       <main className="login-shell">
+        <section className="login-story" aria-hidden="true">
+          <div className="login-story-brand"><span className="brand-mark"><i /></span><span>航标 · 家庭仓库</span></div>
+          <div>
+            <p className="eyebrow">A QUIET INDEX FOR YOUR HOME</p>
+            <h2>家里的东西，<br />不该藏在记忆里。</h2>
+            <p>从装载架到每一层、每个容器和物品，把家的空间整理成随时可查的清晰坐标。</p>
+          </div>
+          <div className="login-story-points">
+            <span>位置清晰</span><span>双端同步</span><span>家庭私有</span>
+          </div>
+        </section>
         <section className="login-card" aria-labelledby="login-title">
-          <div className="login-brand"><span className="brand-mark" aria-hidden="true"><i /></span><div><b>航标</b><span>家庭仓库</span></div></div>
-          <p className="eyebrow">PRIVATE HOME INVENTORY</p>
+          <div className="login-brand"><span className="brand-mark" aria-hidden="true"><i /></span><div><b>航标</b><span>家庭仓库</span></div><em>仅限家庭成员</em></div>
+          <p className="eyebrow">WELCOME HOME</p>
           <h1 id="login-title">进入家庭仓库</h1>
-          <p className="login-copy">请输入家庭访问密码。账号已固定，无需填写用户名。</p>
+          <p className="login-copy">只需输入家庭访问密码，固定账号会在后台安全连接。</p>
           <form onSubmit={unlockWarehouse}>
             <label htmlFor="household-password">访问密码</label>
             <input
@@ -503,7 +514,7 @@ export default function Home() {
             {authError && <p className="login-error" id="password-error" role="alert">{authError}</p>}
             <button type="submit" disabled={!password || authenticating}>{authenticating ? "正在验证…" : "验证并进入"}</button>
           </form>
-          <small>验证由 Supabase Auth 完成 · 通过 RLS 仅访问家庭数据</small>
+          <small>Supabase Auth 安全验证 · 数据仅对家庭账号开放</small>
         </section>
       </main>
     );
@@ -517,27 +528,26 @@ export default function Home() {
           <div><b>航标</b><span>家庭仓库</span></div>
         </div>
         <div className="topbar-meta">
-          <span className="read-only">可编辑</span>
+          <span className="read-only">云端可编辑</span>
           <span className={`cloud-state ${error ? "offline" : ""}`}>
             <i />{saving ? "正在保存" : loading ? "正在同步" : error ? "连接异常" : "云端已连接"}
           </span>
           <button className="refresh-button" onClick={() => void loadWarehouse(accessToken)} disabled={loading} aria-label="刷新云端数据">
-            ↻
+            <span aria-hidden="true">↻</span><b>刷新</b>
           </button>
-          <button className="lock-button" onClick={lockWarehouse}>锁定</button>
+          <button className="lock-button" onClick={lockWarehouse}><span aria-hidden="true">⌑</span><b>锁定</b></button>
         </div>
       </header>
 
       <section className="hero">
-        <div>
+        <div className="hero-intro">
           <p className="eyebrow">HOME INVENTORY · 家庭空间索引</p>
-          <h1>家的每一件东西，<br />都有清晰坐标。</h1>
-          <p className="hero-copy">查看装载架、容器和物品，快速回答“东西在哪儿”和“还剩多少”。</p>
+          <h1>仓库总览</h1>
+          <p className="hero-copy">从装载架逐层展开，或直接搜索容器与物品。家的库存，现在一眼就能看清。</p>
         </div>
         <div className="hero-status">
-          <span>最后同步</span>
-          <strong>{formatTime(updatedAt)}</strong>
-          <small>修改会直接保存到云端 · 版本 {revision}</small>
+          <span className={`sync-orb ${error ? "offline" : ""}`} aria-hidden="true"><i /></span>
+          <div><span>最后同步</span><strong>{formatTime(updatedAt)}</strong><small>云端版本 {revision} · 修改自动同步至 iPhone</small></div>
         </div>
       </section>
 
@@ -547,15 +557,15 @@ export default function Home() {
       </section>}
 
       <section className="metrics" aria-label="仓库摘要">
-        <article><span className="metric-icon blue">⌂</span><div><b>{racks.length}</b><small>装载架层位</small></div></article>
-        <article><span className="metric-icon amber">▣</span><div><b>{boxes.length}</b><small>收纳容器</small></div></article>
-        <article><span className="metric-icon green">◇</span><div><b>{items.length}</b><small>物品种类 · {totalQuantity} 件</small></div></article>
-        <article><span className="metric-icon coral">!</span><div><b>{attentionCount + activeLoans.length}</b><small>需要留意</small></div></article>
+        <article><span className="metric-icon blue">架</span><div><small>装载架</small><b>{rackGroups.length}</b><span>{racks.length} 个层位可展开</span></div></article>
+        <article><span className="metric-icon amber">箱</span><div><small>收纳容器</small><b>{boxes.length}</b><span>位置与装载率已记录</span></div></article>
+        <article><span className="metric-icon green">物</span><div><small>物品种类</small><b>{items.length}</b><span>合计 {totalQuantity} 件</span></div></article>
+        <article><span className="metric-icon coral">!</span><div><small>需要留意</small><b>{attentionCount + activeLoans.length}</b><span>低库存、到期或借出</span></div></article>
       </section>
 
       <section className="warehouse-panel">
         <div className="panel-head">
-          <div><p className="eyebrow">WAREHOUSE</p><h2>仓库管理</h2></div>
+          <div><p className="eyebrow">WAREHOUSE</p><h2>仓库管理</h2><p>浏览、查找并编辑家庭库存</p></div>
           <label className="search-field">
             <span>⌕</span>
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称、编号、位置或备注" />
@@ -595,7 +605,8 @@ export default function Home() {
               {mode === "item" && filteredItems.map((item) => {
                 const box = boxes.find((value) => value.boxCode === item.boxCode);
                 const low = item.lowStockThreshold !== undefined && (item.quantity || 0) <= item.lowStockThreshold;
-                return <button className="entity-row" key={item.id} onClick={() => setSelected({ type: "item", value: item })}>
+                const isSelected = selected?.type === "item" && selected.value.id === item.id;
+                return <button className={`entity-row ${isSelected ? "is-selected" : ""}`} aria-pressed={isSelected} key={item.id} onClick={() => setSelected({ type: "item", value: item })}>
                   <span className="thumb">◇</span>
                   <span className="entity-main"><b>{itemName(item)}</b><small>{[item.spec, item.category].filter(Boolean).join(" · ") || "未分类"}</small><em>{box ? `${box.displayName || box.boxCode} · ${locationOf(box)}` : item.shelfCode || "未指定容器"}</em></span>
                   <span className="entity-end"><strong>{item.quantity || 0}<small>{item.unit || "件"}</small></strong><i className={low ? "warn" : ""}>{low ? "库存偏低" : item.status || "备用"}</i></span>
@@ -603,7 +614,8 @@ export default function Home() {
               })}
               {mode === "container" && filteredBoxes.map((box) => {
                 const count = items.filter((item) => item.boxCode === box.boxCode).length;
-                return <button className="entity-row" key={box.boxCode} onClick={() => setSelected({ type: "container", value: box })}>
+                const isSelected = selected?.type === "container" && selected.value.boxCode === box.boxCode;
+                return <button className={`entity-row ${isSelected ? "is-selected" : ""}`} aria-pressed={isSelected} key={box.boxCode} onClick={() => setSelected({ type: "container", value: box })}>
                   <span className="thumb box">▣</span><span className="entity-main"><b>{box.displayName || containerTypes[box.containerTypeRaw || ""] || "未命名容器"}</b><small>{box.boxCode} · {contentCategories[box.contentCodeRaw || ""] || "未分类"}</small><em>{locationOf(box)}</em></span><span className="entity-end"><strong>{count}<small>种</small></strong><i>{box.loadPercent || 0}% 装载</i></span>
                 </button>;
               })}
@@ -628,7 +640,7 @@ export default function Home() {
                       const layerExpanded = Boolean(expandedRackLayers[rack.rackCode]) || Boolean(query.trim());
                       return <div className="rack-layer" key={rack.rackCode}>
                         <button
-                          className="rack-layer-header"
+                          className={`rack-layer-header ${selected?.type === "rack" && selected.value.rackCode === rack.rackCode ? "is-selected" : ""}`}
                           type="button"
                           aria-expanded={layerExpanded}
                           aria-controls={`rack-layer-${rack.rackCode}`}
@@ -645,7 +657,7 @@ export default function Home() {
                         {layerExpanded && <div className="layer-containers" id={`rack-layer-${rack.rackCode}`}>
                           {layerBoxes.length ? layerBoxes.map((box) => {
                             const itemCount = items.filter((item) => item.boxCode === box.boxCode).length;
-                            return <button className="rack-container-row" type="button" key={box.boxCode} onClick={() => setSelected({ type: "container", value: box })}>
+                            return <button className="rack-container-row" aria-pressed={selected?.type === "container" && selected.value.boxCode === box.boxCode} type="button" key={box.boxCode} onClick={() => setSelected({ type: "container", value: box })}>
                               <span className="container-branch" aria-hidden="true">└</span>
                               <span className="entity-main"><b>{box.displayName || containerTypes[box.containerTypeRaw || ""] || "未命名容器"}</b><small>{box.boxCode} · {contentCategories[box.contentCodeRaw || ""] || "未分类"}</small></span>
                               <span>{itemCount} 种物品</span>
@@ -658,7 +670,9 @@ export default function Home() {
                 </section>;
               })}
             </div>
-            <aside className="detail-panel">
+            {selected && <button className="detail-backdrop" type="button" onClick={() => setSelected(null)} aria-label="关闭详情" />}
+            <aside className={`detail-panel ${selected ? "is-open" : ""}`} aria-label="记录详情">
+              {selected && <button className="detail-close" type="button" onClick={() => setSelected(null)}><span aria-hidden="true">×</span>关闭详情</button>}
               {selected ? <EntityDetail key={`${selected.type}:${selected.type === "item" ? selected.value.id : selected.type === "container" ? selected.value.boxCode : selected.value.rackCode}`} selected={selected} boxes={boxes} items={items} accessToken={accessToken} saving={saving} onSave={saveEntity} /> : <div className="detail-placeholder"><span>⌖</span><b>选择一条记录</b><p>这里会显示完整位置，也可以进入编辑。</p></div>}
             </aside>
           </div>
