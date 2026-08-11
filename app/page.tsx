@@ -231,8 +231,10 @@ export default function Home() {
   const [category, setCategory] = useState("全部");
   const [status, setStatus] = useState("全部");
   const [selected, setSelected] = useState<SelectedEntity>(null);
+  const [containerToEdit, setContainerToEdit] = useState<InventoryBox | null>(null);
   const [expandedRackGroups, setExpandedRackGroups] = useState<Record<string, boolean>>({});
   const [expandedRackLayers, setExpandedRackLayers] = useState<Record<string, boolean>>({});
+  const [expandedContainers, setExpandedContainers] = useState<Record<string, boolean>>({});
 
   const loadWarehouse = useCallback(async (token: string, silent = false) => {
     if (!silent) setLoading(true);
@@ -306,6 +308,7 @@ export default function Home() {
         if ((rows[0]?.revision || 0) > revision) {
           await loadWarehouse(accessToken, true);
           setSelected(null);
+          setContainerToEdit(null);
         }
       } catch {
         // Keep the currently loaded data during a transient poll failure.
@@ -477,6 +480,26 @@ export default function Home() {
 
   const visibleCount = mode === "item" ? filteredItems.length : mode === "container" ? filteredBoxes.length : filteredRackGroups.length;
 
+  function showItemDetails(item: InventoryItem) {
+    setContainerToEdit(null);
+    setSelected({ type: "item", value: item });
+    window.requestAnimationFrame(() => {
+      document.getElementById("inventory-detail-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
+  function editContainer(box: InventoryBox) {
+    setSelected(null);
+    setContainerToEdit(box);
+    window.requestAnimationFrame(() => {
+      document.getElementById("inventory-detail-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
+  function toggleContainer(boxCode: string) {
+    setExpandedContainers((current) => ({ ...current, [boxCode]: !current[boxCode] }));
+  }
+
   if (restoringSession) {
     return <main className="login-shell"><div className="login-card login-loading"><div className="loader" /><p>正在恢复安全访问…</p></div></main>;
   }
@@ -569,7 +592,7 @@ export default function Home() {
             ["container", "容器", boxes.length],
             ["item", "物品", items.length],
           ] as const).map(([value, label, count]) => (
-            <button key={value} className={mode === value ? "active" : ""} onClick={() => { setMode(value); setSelected(null); }} role="tab" aria-selected={mode === value}>
+            <button key={value} className={mode === value ? "active" : ""} onClick={() => { setMode(value); setSelected(null); setContainerToEdit(null); }} role="tab" aria-selected={mode === value}>
               {label}<span>{count}</span>
             </button>
           ))}
@@ -595,7 +618,7 @@ export default function Home() {
               {mode === "item" && filteredItems.map((item) => {
                 const box = boxes.find((value) => value.boxCode === item.boxCode);
                 const low = item.lowStockThreshold !== undefined && (item.quantity || 0) <= item.lowStockThreshold;
-                return <button className="entity-row" key={item.id} onClick={() => setSelected({ type: "item", value: item })}>
+                return <button className="entity-row" key={item.id} onClick={() => showItemDetails(item)}>
                   <span className="thumb">◇</span>
                   <span className="entity-main"><b>{itemName(item)}</b><small>{[item.spec, item.category].filter(Boolean).join(" · ") || "未分类"}</small><em>{box ? `${box.displayName || box.boxCode} · ${locationOf(box)}` : item.shelfCode || "未指定容器"}</em></span>
                   <span className="entity-end"><strong>{item.quantity || 0}<small>{item.unit || "件"}</small></strong><i className={low ? "warn" : ""}>{low ? "库存偏低" : item.status || "备用"}</i></span>
@@ -603,9 +626,15 @@ export default function Home() {
               })}
               {mode === "container" && filteredBoxes.map((box) => {
                 const count = items.filter((item) => item.boxCode === box.boxCode).length;
-                return <button className="entity-row" key={box.boxCode} onClick={() => setSelected({ type: "container", value: box })}>
-                  <span className="thumb box">▣</span><span className="entity-main"><b>{box.displayName || containerTypes[box.containerTypeRaw || ""] || "未命名容器"}</b><small>{box.boxCode} · {contentCategories[box.contentCodeRaw || ""] || "未分类"}</small><em>{locationOf(box)}</em></span><span className="entity-end"><strong>{count}<small>种</small></strong><i>{box.loadPercent || 0}% 装载</i></span>
-                </button>;
+                const containerExpanded = Boolean(expandedContainers[box.boxCode]);
+                return <section className="container-group" key={box.boxCode}>
+                  <button className="entity-row container-toggle-row" type="button" aria-expanded={containerExpanded} aria-controls={`container-contents-${box.boxCode}`} onClick={() => toggleContainer(box.boxCode)}>
+                    <span className="thumb box">▣</span>
+                    <span className="entity-main"><b>{box.displayName || containerTypes[box.containerTypeRaw || ""] || "未命名容器"}</b><small>{box.boxCode} · {contentCategories[box.contentCodeRaw || ""] || "未分类"}</small><em>{locationOf(box)}</em></span>
+                    <span className="entity-end"><strong>{count}<small>种</small></strong><span className="container-meta"><i>{box.loadPercent || 0}% 装载</i><i className="tree-chevron" aria-hidden="true">⌄</i></span></span>
+                  </button>
+                  {containerExpanded && <ContainerContents box={box} boxes={boxes} items={items} expandedContainers={expandedContainers} onToggleContainer={toggleContainer} onSelectItem={showItemDetails} onEditContainer={editContainer} />}
+                </section>;
               })}
               {mode === "rack" && filteredRackGroups.map((group) => {
                 const groupBoxCount = boxes.filter((box) => box.rackCode && rackGroupCode(box.rackCode) === group.groupCode).length;
@@ -645,11 +674,15 @@ export default function Home() {
                         {layerExpanded && <div className="layer-containers" id={`rack-layer-${rack.rackCode}`}>
                           {layerBoxes.length ? layerBoxes.map((box) => {
                             const itemCount = items.filter((item) => item.boxCode === box.boxCode).length;
-                            return <button className="rack-container-row" type="button" key={box.boxCode} onClick={() => setSelected({ type: "container", value: box })}>
-                              <span className="container-branch" aria-hidden="true">└</span>
-                              <span className="entity-main"><b>{box.displayName || containerTypes[box.containerTypeRaw || ""] || "未命名容器"}</b><small>{box.boxCode} · {contentCategories[box.contentCodeRaw || ""] || "未分类"}</small></span>
-                              <span>{itemCount} 种物品</span>
-                            </button>;
+                            const containerExpanded = Boolean(expandedContainers[box.boxCode]);
+                            return <section className="rack-container-node" key={box.boxCode}>
+                              <button className="rack-container-row" type="button" aria-expanded={containerExpanded} aria-controls={`container-contents-${box.boxCode}`} onClick={() => toggleContainer(box.boxCode)}>
+                                <span className="container-branch" aria-hidden="true">└</span>
+                                <span className="entity-main"><b>{box.displayName || containerTypes[box.containerTypeRaw || ""] || "未命名容器"}</b><small>{box.boxCode} · {contentCategories[box.contentCodeRaw || ""] || "未分类"}</small></span>
+                                <span>{itemCount} 种物品 <i className="tree-chevron" aria-hidden="true">⌄</i></span>
+                              </button>
+                              {containerExpanded && <ContainerContents box={box} boxes={boxes} items={items} expandedContainers={expandedContainers} onToggleContainer={toggleContainer} onSelectItem={showItemDetails} onEditContainer={editContainer} compact />}
+                            </section>;
                           }) : <p className="empty-layer">这一层还没有容器</p>}
                         </div>}
                       </div>;
@@ -658,8 +691,19 @@ export default function Home() {
                 </section>;
               })}
             </div>
-            <aside className="detail-panel">
-              {selected ? <EntityDetail key={`${selected.type}:${selected.type === "item" ? selected.value.id : selected.type === "container" ? selected.value.boxCode : selected.value.rackCode}`} selected={selected} boxes={boxes} items={items} accessToken={accessToken} saving={saving} onSave={saveEntity} /> : <div className="detail-placeholder"><span>⌖</span><b>选择一条记录</b><p>这里会显示完整位置，也可以进入编辑。</p></div>}
+            <aside className="detail-panel" id="inventory-detail-panel">
+              {containerToEdit ? <ContainerEditor
+                key={`edit:${containerToEdit.boxCode}`}
+                box={containerToEdit}
+                boxes={boxes}
+                saving={saving}
+                onCancel={() => setContainerToEdit(null)}
+                onSave={async (box) => {
+                  await saveEntity({ type: "container", value: box });
+                  setSelected(null);
+                  setContainerToEdit(null);
+                }}
+              /> : selected ? <EntityDetail key={`${selected.type}:${selected.type === "item" ? selected.value.id : selected.type === "container" ? selected.value.boxCode : selected.value.rackCode}`} selected={selected} boxes={boxes} items={items} accessToken={accessToken} saving={saving} onSave={saveEntity} /> : <div className="detail-placeholder"><span>⌖</span><b>选择一件物品</b><p>先展开容器，再点击里面的物品查看完整详情。</p></div>}
             </aside>
           </div>
         )}
@@ -668,6 +712,60 @@ export default function Home() {
       <footer><span>航标家庭仓库</span><span>元数据增量同步 · 照片按需读取</span></footer>
     </main>
   );
+}
+
+function ContainerContents({
+  box,
+  boxes,
+  items,
+  expandedContainers,
+  onToggleContainer,
+  onSelectItem,
+  onEditContainer,
+  compact = false,
+  ancestors = [],
+}: {
+  box: InventoryBox;
+  boxes: InventoryBox[];
+  items: InventoryItem[];
+  expandedContainers: Record<string, boolean>;
+  onToggleContainer: (boxCode: string) => void;
+  onSelectItem: (item: InventoryItem) => void;
+  onEditContainer: (box: InventoryBox) => void;
+  compact?: boolean;
+  ancestors?: string[];
+}) {
+  const containedItems = items.filter((item) => item.boxCode === box.boxCode);
+  const childContainers = boxes.filter((value) => value.parentBoxCode === box.boxCode && !ancestors.includes(value.boxCode));
+  const nextAncestors = [...ancestors, box.boxCode];
+
+  return <div className={`container-contents ${compact ? "compact" : ""}`} id={`container-contents-${box.boxCode}`}>
+    <div className="container-contents-head">
+      <span>{containedItems.length} 种物品{childContainers.length ? ` · ${childContainers.length} 个子容器` : ""}</span>
+      <button type="button" onClick={() => onEditContainer(box)}>编辑容器</button>
+    </div>
+    {containedItems.map((item) => <button className="container-item-row" type="button" key={item.id} onClick={() => onSelectItem(item)}>
+      <span className="container-item-icon" aria-hidden="true">◇</span>
+      <span className="entity-main"><b>{itemName(item)}</b><small>{[item.spec, item.category, item.status].filter(Boolean).join(" · ") || "未分类"}</small></span>
+      <span className="container-item-action"><b>{item.quantity || 0} {item.unit || "件"}</b><small>查看详情 →</small></span>
+    </button>)}
+    {childContainers.map((child) => {
+      const childExpanded = Boolean(expandedContainers[child.boxCode]);
+      const childItemCount = items.filter((item) => item.boxCode === child.boxCode).length;
+      return <section className="container-child" key={child.boxCode}>
+        <div className="container-child-head">
+          <button className="container-child-row" type="button" aria-expanded={childExpanded} aria-controls={`container-contents-${child.boxCode}`} onClick={() => onToggleContainer(child.boxCode)}>
+            <span aria-hidden="true">▣</span>
+            <span className="entity-main"><b>{child.displayName || child.boxCode}</b><small>{child.boxCode} · 子容器</small></span>
+            <span>{childItemCount} 种 <i className="tree-chevron" aria-hidden="true">⌄</i></span>
+          </button>
+          <button className="container-child-edit" type="button" onClick={() => onEditContainer(child)}>编辑</button>
+        </div>
+        {childExpanded && nextAncestors.length < 8 && <ContainerContents box={child} boxes={boxes} items={items} expandedContainers={expandedContainers} onToggleContainer={onToggleContainer} onSelectItem={onSelectItem} onEditContainer={onEditContainer} compact ancestors={nextAncestors} />}
+      </section>;
+    })}
+    {!containedItems.length && !childContainers.length && <p className="empty-container">这个容器里暂时没有记录物品</p>}
+  </div>;
 }
 
 function EntityDetail({

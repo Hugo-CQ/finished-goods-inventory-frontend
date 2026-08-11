@@ -51,3 +51,14 @@ test("rack view mirrors the native rack, layer, container hierarchy", async () =
   assert.match(page, /aria-expanded=\{groupExpanded\}/);
   assert.match(page, /aria-expanded=\{layerExpanded\}/);
 });
+
+test("containers expand to reveal items before opening item details", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+
+  assert.match(page, /expandedContainers/);
+  assert.match(page, /function ContainerContents/);
+  assert.match(page, /className="container-item-row"/);
+  assert.match(page, /查看详情/);
+  assert.match(page, /编辑容器/);
+  assert.match(page, /scrollIntoView/);
+});
