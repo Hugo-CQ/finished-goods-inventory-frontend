@@ -2,11 +2,12 @@
 /* eslint-disable @next/next/no-img-element -- authenticated Storage photos use short-lived blob URLs */
 
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { AuthenticationRequired, WarehouseSession } from "./warehouse-session";
+import { draftStorageKey, rebaseDraft, validContainerParent } from "./warehouse-draft";
 
 const SUPABASE_URL = "https://dkfqdimwcuqlbybyesbq.supabase.co";
 const SUPABASE_KEY = "sb_publishable_4sIy9A-kgfK96qH7_hdWdw_6wL5z-Ps";
 const HOUSEHOLD_EMAIL = "home-inventory@wuno.cn";
-const SESSION_STORAGE_KEY = "home-inventory-access-token";
 
 type StorageRack = {
   rackCode: string;
@@ -214,6 +215,10 @@ function groupRacks(racks: StorageRack[]) {
 }
 
 export default function Home() {
+  const [sessionClient] = useState(() => new WarehouseSession({ url: SUPABASE_URL, key: SUPABASE_KEY, storage: () => sessionStorage }));
+  const [offline, setOffline] = useState(false);
+  const [lastChecked, setLastChecked] = useState<string>();
+  const request = useCallback((path: string, init?: RequestInit) => sessionClient.request(path, init), [sessionClient]);
   const [state, setState] = useState<InventoryState | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string>();
   const [revision, setRevision] = useState(0);
@@ -237,11 +242,12 @@ export default function Home() {
   const [expandedContainers, setExpandedContainers] = useState<Record<string, boolean>>({});
 
   const loadWarehouse = useCallback(async (token: string, silent = false) => {
+    if (!token) return;
     if (!silent) setLoading(true);
     setError("");
     try {
-      const snapshotResponse = await fetch(
-        `${SUPABASE_URL}/rest/v1/rpc/home_inventory_get_state`,
+      const snapshotResponse = await request(
+        "/rest/v1/rpc/home_inventory_get_state",
         {
           method: "POST",
           headers: {
@@ -254,46 +260,73 @@ export default function Home() {
           cache: "no-store",
         },
       );
-      if (snapshotResponse.status === 401 || snapshotResponse.status === 403) {
-        sessionStorage.removeItem(SESSION_STORAGE_KEY);
-        setAccessToken(null);
-        setAuthError("验证已过期，请重新输入密码。");
-        setState(null);
-        return;
-      }
       if (!snapshotResponse.ok) throw new Error("无法读取家庭仓库数据");
       const snapshot = (await snapshotResponse.json()) as SnapshotRow;
       setState(snapshot.payload || { boxes: [], racks: [], binds: [], loans: [] });
       setRevision(snapshot.revision || 0);
       setUpdatedAt(snapshot.updated_at);
       setConflict(false);
+      setLastChecked(new Date().toISOString());
+      if (!silent) {
+        const saved = sessionStorage.getItem("home-inventory-last-draft");
+        if (saved) {
+          try {
+            const { kind, id } = JSON.parse(saved);
+            if (kind === "item") {
+              const item = snapshot.payload.binds?.find((value) => value.id === id);
+              if (item) setSelected({ type: "item", value: item });
+            } else if (kind === "container") {
+              const box = snapshot.payload.boxes?.find((value) => value.boxCode === id);
+              if (box) setContainerToEdit(box);
+            } else if (kind === "rack") {
+              const rack = snapshot.payload.racks?.find((value) => value.rackCode === id);
+              if (rack) setSelected({ type: "rack", value: rack });
+            }
+          } catch { /* A damaged draft marker does not prevent loading the warehouse. */ }
+        }
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "家庭云端连接失败");
-      if (!silent) setState(null);
+      if (caught instanceof AuthenticationRequired) setAuthError(caught.message);
     } finally {
       if (!silent) setLoading(false);
     }
-  }, []);
+  }, [request]);
 
   useEffect(() => {
-    const restoredToken = sessionStorage.getItem(SESSION_STORAGE_KEY);
-    if (!restoredToken) {
-      queueMicrotask(() => setRestoringSession(false));
-      return;
-    }
-    queueMicrotask(() => {
-      setAccessToken(restoredToken);
-      void loadWarehouse(restoredToken).finally(() => setRestoringSession(false));
+    const unsubscribe = sessionClient.subscribe((token) => {
+      setAccessToken(token);
+      if (!token) setAuthError("请重新验证访问密码，编辑草稿会保留。");
     });
-  }, [loadWarehouse]);
+    void sessionClient.restore().then(async (token) => {
+      if (token) { setAccessToken(token); await loadWarehouse(token); }
+    }).catch((error) => setAuthError(error instanceof Error ? error.message : "暂时无法连接，请重试。"))
+      .finally(() => setRestoringSession(false));
+    return unsubscribe;
+  }, [loadWarehouse, sessionClient]);
+
+  useEffect(() => {
+    const update = () => {
+      setOffline(!navigator.onLine);
+      if (navigator.onLine && !accessToken) {
+        void sessionClient.restore().then(async (token) => {
+          if (token) { setAuthError(""); setAccessToken(token); await loadWarehouse(token); }
+        }).catch(() => { /* Keep the saved session and draft for the next explicit retry. */ });
+      }
+    };
+    queueMicrotask(update);
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => { window.removeEventListener("online", update); window.removeEventListener("offline", update); };
+  }, [accessToken, sessionClient, loadWarehouse]);
 
   useEffect(() => {
     if (!accessToken) return;
     const checkForUpdates = async () => {
       if (document.visibilityState !== "visible" || saving || conflict || document.querySelector(".entity-editor")) return;
       try {
-        const response = await fetch(
-          `${SUPABASE_URL}/rest/v1/home_inventory_sync_state?select=revision,updated_at&limit=1`,
+        const response = await request(
+          "/rest/v1/home_inventory_sync_state?select=revision,updated_at&limit=1",
           {
             headers: {
               apikey: SUPABASE_KEY,
@@ -303,15 +336,17 @@ export default function Home() {
             cache: "no-store",
           },
         );
-        if (!response.ok) return;
+        if (!response.ok) throw new Error("云端暂时不可用，当前内容已保留。");
+        setLastChecked(new Date().toISOString());
+        setError("");
         const rows = (await response.json()) as Array<{ revision: number }>;
         if ((rows[0]?.revision || 0) > revision) {
           await loadWarehouse(accessToken, true);
           setSelected(null);
           setContainerToEdit(null);
         }
-      } catch {
-        // Keep the currently loaded data during a transient poll failure.
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : "连接中断，当前内容已保留。");
       }
     };
     const timer = window.setInterval(() => void checkForUpdates(), 30_000);
@@ -323,7 +358,7 @@ export default function Home() {
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("online", onVisible);
     };
-  }, [accessToken, conflict, loadWarehouse, revision, saving]);
+  }, [accessToken, conflict, loadWarehouse, revision, saving, request]);
 
   const saveEntity = useCallback(async (nextSelected: Exclude<SelectedEntity, null>) => {
     if (!accessToken || !state || saving) return;
@@ -331,7 +366,8 @@ export default function Home() {
     setError("");
     setConflict(false);
     const now = new Date().toISOString();
-    const nextState = structuredClone(state);
+    let nextState = structuredClone(state);
+    let committedSelection = nextSelected;
     if (nextSelected.type === "item") {
       nextSelected.value.updatedAt = now;
       nextState.binds = (nextState.binds || []).map((item) => item.id === nextSelected.value.id ? nextSelected.value : item);
@@ -356,7 +392,7 @@ export default function Home() {
       },
     ];
     try {
-      const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/home_inventory_commit_state`, {
+      let response = await request("/rest/v1/rpc/home_inventory_commit_state", {
         method: "POST",
         headers: {
           apikey: SUPABASE_KEY,
@@ -370,7 +406,40 @@ export default function Home() {
           payload: nextState,
         }),
       });
-      const result = await response.json() as CommitResponse & { message?: string };
+      let result = await response.json() as CommitResponse & { message?: string };
+      if (!response.ok && result.message === "SYNC_CONFLICT") {
+        const latestResponse = await request("/rest/v1/rpc/home_inventory_get_state", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        if (!latestResponse.ok) throw new Error("无法载入最新资料，草稿已保留。");
+        const latest = await latestResponse.json() as SnapshotRow;
+        const recordIn = (value: InventoryState) => nextSelected.type === "item"
+          ? value.binds?.find((item) => item.id === nextSelected.value.id)
+          : nextSelected.type === "container" ? value.boxes?.find((box) => box.boxCode === nextSelected.value.boxCode)
+          : value.racks?.find((rack) => rack.rackCode === nextSelected.value.rackCode);
+        const base = recordIn(state), current = recordIn(latest.payload);
+        if (!base || !current) { setConflict(true); throw new Error("该记录已在另一台设备删除，草稿已保留。请先核对云端资料。"); }
+        let rebased: typeof nextSelected.value;
+        try { rebased = rebaseDraft<typeof nextSelected.value>(base, nextSelected.value, current); }
+        catch (error) { setConflict(true); throw error; }
+        rebased.updatedAt = now;
+        committedSelection = { ...nextSelected, value: rebased } as typeof nextSelected;
+        const event = nextState.events?.at(-1);
+        nextState = structuredClone(latest.payload);
+        if (committedSelection.type === "item") {
+          const editedItem = rebased as InventoryItem;
+          nextState.binds = nextState.binds?.map((item) => item.id === editedItem.id ? editedItem : item);
+        }
+        else if (committedSelection.type === "container") {
+          const editedBox = rebased as InventoryBox;
+          if (!validContainerParent(nextState.boxes || [], editedBox.boxCode, editedBox.parentBoxCode || "")) throw new Error("容器位置已改变，请重新选择上级容器。");
+          nextState.boxes = nextState.boxes?.map((box) => box.boxCode === editedBox.boxCode ? editedBox : box);
+        } else nextState.racks = nextState.racks?.map((rack) => rack.rackCode === (rebased as StorageRack).rackCode ? rebased as StorageRack : rack);
+        nextState.events = [...(nextState.events || []), ...(event ? [event] : [])];
+        response = await request("/rest/v1/rpc/home_inventory_commit_state", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ expected_revision: latest.revision, device_id: "web-browser", payload: nextState }),
+        });
+        result = await response.json() as CommitResponse & { message?: string };
+      }
       if (!response.ok) {
         if (result.message === "SYNC_CONFLICT") {
           setConflict(true);
@@ -381,14 +450,15 @@ export default function Home() {
       setState(nextState);
       setRevision(result.revision);
       setUpdatedAt(result.updated_at);
-      setSelected(nextSelected);
+      setSelected(committedSelection);
+      setLastChecked(new Date().toISOString());
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "保存失败");
       throw caught;
     } finally {
       setSaving(false);
     }
-  }, [accessToken, revision, saving, state]);
+  }, [accessToken, revision, saving, state, request]);
 
   async function unlockWarehouse(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -396,19 +466,10 @@ export default function Home() {
     setAuthenticating(true);
     setAuthError("");
     try {
-      const authResponse = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-        method: "POST",
-        headers: { apikey: SUPABASE_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify({ email: HOUSEHOLD_EMAIL, password }),
-      });
-      const auth = (await authResponse.json()) as { access_token?: string };
-      if (!authResponse.ok || !auth.access_token) {
-        throw new Error("密码不正确，请重试。");
-      }
-      sessionStorage.setItem(SESSION_STORAGE_KEY, auth.access_token);
-      setAccessToken(auth.access_token);
+      const token = await sessionClient.signIn(HOUSEHOLD_EMAIL, password);
+      setAccessToken(token);
       setPassword("");
-      await loadWarehouse(auth.access_token);
+      await loadWarehouse(token);
     } catch (caught) {
       setAuthError(caught instanceof Error ? caught.message : "验证失败，请稍后重试。");
     } finally {
@@ -417,7 +478,7 @@ export default function Home() {
   }
 
   function lockWarehouse() {
-    sessionStorage.removeItem(SESSION_STORAGE_KEY);
+    sessionClient.lock();
     setAccessToken(null);
     setAuthenticating(false);
     setLoading(false);
@@ -484,7 +545,7 @@ export default function Home() {
     setContainerToEdit(null);
     setSelected({ type: "item", value: item });
     window.requestAnimationFrame(() => {
-      document.getElementById("inventory-detail-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      document.getElementById("inventory-detail-panel")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
     });
   }
 
@@ -492,7 +553,7 @@ export default function Home() {
     setSelected(null);
     setContainerToEdit(box);
     window.requestAnimationFrame(() => {
-      document.getElementById("inventory-detail-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      document.getElementById("inventory-detail-panel")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
     });
   }
 
@@ -526,7 +587,7 @@ export default function Home() {
             {authError && <p className="login-error" id="password-error" role="alert">{authError}</p>}
             <button type="submit" disabled={!password || authenticating}>{authenticating ? "正在验证…" : "验证并进入"}</button>
           </form>
-          <small>验证由 Supabase Auth 完成 · 通过 RLS 仅访问家庭数据</small>
+          <small>仅供家庭成员访问，密码验证后查看与编辑。</small>
         </section>
       </main>
     );
@@ -541,10 +602,10 @@ export default function Home() {
         </div>
         <div className="topbar-meta">
           <span className="read-only">可编辑</span>
-          <span className={`cloud-state ${error ? "offline" : ""}`}>
-            <i />{saving ? "正在保存" : loading ? "正在同步" : error ? "连接异常" : "云端已连接"}
+          <span className={`cloud-state ${error || offline ? "offline" : ""}`} role="status" aria-live="polite">
+            <i />{offline ? "当前离线" : saving ? "正在保存" : loading ? "正在同步" : error ? "等待重新连接" : "已连接云端"}
           </span>
-          <button className="refresh-button" onClick={() => void loadWarehouse(accessToken)} disabled={loading} aria-label="刷新云端数据">
+          <button className="refresh-button" onClick={() => void loadWarehouse(accessToken)} disabled={loading || saving || offline} aria-label="刷新云端数据">
             ↻
           </button>
           <button className="lock-button" onClick={lockWarehouse}>锁定</button>
@@ -554,18 +615,23 @@ export default function Home() {
       <section className="hero">
         <div>
           <p className="eyebrow">HOME INVENTORY · 家庭空间索引</p>
-          <h1>家的每一件东西，<br />都有清晰坐标。</h1>
-          <p className="hero-copy">查看装载架、容器和物品，快速回答“东西在哪儿”和“还剩多少”。</p>
+          <h1>家庭仓库</h1>
+          <p className="hero-copy">找物品，查看容器，更新存放位置。</p>
         </div>
         <div className="hero-status">
           <span>最后同步</span>
           <strong>{formatTime(updatedAt)}</strong>
-          <small>修改会直接保存到云端 · 版本 {revision}</small>
+          <small>{lastChecked ? `最近检查：${formatTime(lastChecked)}` : "正在检查连接"} · 编辑后点保存即可同步</small>
         </div>
       </section>
 
+      {(offline || error) && !conflict && <section className="connection-notice" role="status">
+        <span>{offline ? "网络已断开，仍可查看已加载的记录和编辑草稿。联网后再保存。" : error}</span>
+        {!offline && <button type="button" onClick={() => void loadWarehouse(accessToken)} disabled={loading || saving}>重新连接</button>}
+      </section>}
+
       {conflict && <section className="sync-alert" role="alert">
-        <div><b>检测到同步冲突</b><span>云端有更新的版本，已阻止覆盖。</span></div>
+        <div><b>云端有新的修改</b><span>本次编辑草稿已保留，载入最新资料后可继续核对与保存。</span></div>
         <button onClick={() => { void loadWarehouse(accessToken); setSelected(null); }}>重新载入云端版本</button>
       </section>}
 
@@ -703,7 +769,7 @@ export default function Home() {
                   setSelected(null);
                   setContainerToEdit(null);
                 }}
-              /> : selected ? <EntityDetail key={`${selected.type}:${selected.type === "item" ? selected.value.id : selected.type === "container" ? selected.value.boxCode : selected.value.rackCode}`} selected={selected} boxes={boxes} items={items} accessToken={accessToken} saving={saving} onSave={saveEntity} /> : <div className="detail-placeholder"><span>⌖</span><b>选择一件物品</b><p>先展开容器，再点击里面的物品查看完整详情。</p></div>}
+              /> : selected ? <EntityDetail key={`${selected.type}:${selected.type === "item" ? selected.value.id : selected.type === "container" ? selected.value.boxCode : selected.value.rackCode}`} selected={selected} boxes={boxes} items={items} request={request} saving={saving} onSave={saveEntity} /> : <div className="detail-placeholder"><span>⌖</span><b>选择一件物品</b><p>先展开容器，再点击里面的物品查看完整详情。</p></div>}
             </aside>
           </div>
         )}
@@ -772,29 +838,28 @@ function EntityDetail({
   selected,
   boxes,
   items,
-  accessToken,
+  request,
   saving,
   onSave,
 }: {
   selected: Exclude<SelectedEntity, null>;
   boxes: InventoryBox[];
   items: InventoryItem[];
-  accessToken: string;
+  request: (path: string, init?: RequestInit) => Promise<Response>;
   saving: boolean;
   onSave: (selected: Exclude<SelectedEntity, null>) => Promise<void>;
 }) {
   const selectedKey = selected.type === "item" ? selected.value.id : selected.type === "container" ? selected.value.boxCode : selected.value.rackCode;
   const cloudPhotoPath = selected.type === "item" || selected.type === "container" ? selected.value.cloudPhotoPath : "";
   const embeddedPhoto = selected.type === "item" || selected.type === "container" ? photoSource(selected.value.photoData) : "";
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(() => Boolean(sessionStorage.getItem(draftStorageKey(selected.type, selectedKey))));
   const [photoURL, setPhotoURL] = useState(embeddedPhoto);
 
   useEffect(() => {
     if (!cloudPhotoPath) return;
     let objectURL = "";
     const controller = new AbortController();
-    void fetch(`${SUPABASE_URL}/storage/v1/object/authenticated/home-inventory-photos/${cloudPhotoPath}`, {
-      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${accessToken}` },
+    void request(`/storage/v1/object/authenticated/home-inventory-photos/${cloudPhotoPath}`, {
       signal: controller.signal,
     }).then(async (response) => {
       if (!response.ok) return;
@@ -805,7 +870,7 @@ function EntityDetail({
       controller.abort();
       if (objectURL) URL.revokeObjectURL(objectURL);
     };
-  }, [accessToken, cloudPhotoPath]);
+  }, [request, cloudPhotoPath]);
 
   if (editing) {
     return <EntityEditor
@@ -863,9 +928,56 @@ function EditorActions({ saving, onCancel }: { saving: boolean; onCancel: () => 
   return <div className="editor-actions"><button type="button" className="cancel-button" onClick={onCancel} disabled={saving}>取消</button><button type="submit" className="save-button" disabled={saving}>{saving ? "正在保存…" : "保存到云端"}</button></div>;
 }
 
+function useWarehouseDraft<T extends object>(kind: string, id: string, original: T) {
+  const key = draftStorageKey(kind, id);
+  const [saved] = useState<{ base: T; draft: T }>(() => {
+    try {
+      const raw = sessionStorage.getItem(key);
+      if (raw) {
+        const value = JSON.parse(raw);
+        if (value.base && value.draft && typeof value.base === "object" && typeof value.draft === "object") return value;
+      }
+    } catch { /* Use the current record if the stored draft cannot be decoded. */ }
+    return { base: structuredClone(original), draft: structuredClone(original) };
+  });
+  const [draft, updateDraft] = useState<T>(saved.draft);
+  const [draftError, setDraftError] = useState("");
+  const dirty = JSON.stringify(draft) !== JSON.stringify(saved.base);
+  const setDraft = (value: T) => {
+    updateDraft(value);
+    try {
+      sessionStorage.setItem(key, JSON.stringify({ base: saved.base, draft: value }));
+      sessionStorage.setItem("home-inventory-last-draft", JSON.stringify({ kind, id }));
+    } catch { setDraftError("浏览器无法保存草稿，请在离开页面前保存到云端。"); }
+  };
+  const clear = () => {
+    sessionStorage.removeItem(key);
+    const marker = sessionStorage.getItem("home-inventory-last-draft");
+    if (marker === JSON.stringify({ kind, id })) sessionStorage.removeItem("home-inventory-last-draft");
+  };
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+  const save = async (onSave: (value: T) => Promise<void>) => {
+    setDraftError("");
+    try { await onSave(rebaseDraft(saved.base, draft, original)); clear(); }
+    catch (error) { setDraftError(error instanceof Error ? error.message : "保存失败，草稿已保留。"); }
+  };
+  const cancel = (onCancel: () => void) => {
+    if (dirty && !window.confirm("放弃尚未保存的修改？已保存的记录不会受到影响。")) return;
+    clear(); onCancel();
+  };
+  const notice = <p className={draftError ? "draft-error" : "draft-status"} role="status">{draftError || (dirty ? "草稿已保留在此标签页 · 保存后才会同步到其他设备" : "修改后点击保存，即可同步到其他设备")}</p>;
+  return { draft, setDraft, dirty, save, cancel, notice };
+}
+
 function ItemEditor({ item, boxes, saving, onCancel, onSave }: { item: InventoryItem; boxes: InventoryBox[]; saving: boolean; onCancel: () => void; onSave: (item: InventoryItem) => Promise<void> }) {
-  const [draft, setDraft] = useState(() => structuredClone(item));
-  return <form className="entity-editor" onSubmit={(event) => { event.preventDefault(); void onSave(draft).catch(() => {}); }}>
+  const { draft, setDraft, dirty, save, cancel, notice } = useWarehouseDraft("item", item.id, item);
+  return <form className="entity-editor" data-dirty={dirty} aria-busy={saving} onSubmit={(event) => { event.preventDefault(); if (!saving) void save(onSave); }}><fieldset disabled={saving}>
+    {notice}
     <div className="detail-heading"><p className="eyebrow">EDIT ITEM</p><span className="detail-code">{draft.materialCode || draft.id.slice(0, 8)}</span></div>
     <label>物品名称<input required value={draft.materialName || ""} onChange={(event) => setDraft({ ...draft, materialName: event.target.value })} /></label>
     <div className="editor-grid"><label>数量<input type="number" min="0" value={draft.quantity ?? 0} onChange={(event) => setDraft({ ...draft, quantity: Number(event.target.value) })} /></label><label>单位<input value={draft.unit || ""} onChange={(event) => setDraft({ ...draft, unit: event.target.value })} /></label></div>
@@ -875,31 +987,38 @@ function ItemEditor({ item, boxes, saving, onCancel, onSave }: { item: Inventory
     <label>关键词<input value={draft.keywords || ""} onChange={(event) => setDraft({ ...draft, keywords: event.target.value })} /></label>
     <div className="editor-grid"><label>到期日期<input type="date" value={draft.expiryDate || ""} onChange={(event) => setDraft({ ...draft, expiryDate: event.target.value })} /></label><label>低库存阈值<input type="number" min="0" value={draft.lowStockThreshold ?? ""} onChange={(event) => setDraft({ ...draft, lowStockThreshold: event.target.value === "" ? undefined : Number(event.target.value) })} /></label></div>
     <label>备注<textarea rows={4} value={draft.note || ""} onChange={(event) => setDraft({ ...draft, note: event.target.value })} /></label>
-    <EditorActions saving={saving} onCancel={onCancel} />
-  </form>;
+    <EditorActions saving={saving} onCancel={() => cancel(onCancel)} />
+  </fieldset></form>;
 }
 
 function ContainerEditor({ box, boxes, saving, onCancel, onSave }: { box: InventoryBox; boxes: InventoryBox[]; saving: boolean; onCancel: () => void; onSave: (box: InventoryBox) => Promise<void> }) {
-  const [draft, setDraft] = useState(() => structuredClone(box));
-  return <form className="entity-editor" onSubmit={(event) => { event.preventDefault(); void onSave(draft).catch(() => {}); }}>
+  const { draft, setDraft, dirty, save, cancel, notice } = useWarehouseDraft("container", box.boxCode, box);
+  return <form className="entity-editor" data-dirty={dirty} onSubmit={(event) => {
+    event.preventDefault(); if (saving) return; void save(async (value) => {
+      if (!validContainerParent(boxes, value.boxCode, value.parentBoxCode || "")) throw new Error("不能将容器放进自身或自己的下级容器。");
+      await onSave(value);
+    });
+  }} aria-busy={saving}><fieldset disabled={saving}>
+    {notice}
     <div className="detail-heading"><p className="eyebrow">EDIT CONTAINER</p><span className="detail-code">{draft.boxCode}</span></div>
     <label>容器名称<input value={draft.displayName || ""} onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></label>
     <div className="editor-grid"><label>容器类型<select value={draft.containerTypeRaw || "OT"} onChange={(event) => setDraft({ ...draft, containerTypeRaw: event.target.value })}>{Object.entries(containerTypes).map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select></label><label>内容分类<select value={draft.contentCodeRaw || "OT"} onChange={(event) => setDraft({ ...draft, contentCodeRaw: event.target.value })}>{Object.entries(contentCategories).map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select></label></div>
     <label>装载率 <span className="range-value">{draft.loadPercent || 0}%</span><input type="range" min="0" max="100" step="10" value={draft.loadPercent || 0} onChange={(event) => setDraft({ ...draft, loadPercent: Number(event.target.value) })} /></label>
-    <label>上级容器<select value={draft.parentBoxCode || ""} onChange={(event) => setDraft({ ...draft, parentBoxCode: event.target.value, rackCode: event.target.value ? "" : draft.rackCode })}><option value="">无</option>{boxes.filter((value) => value.boxCode !== draft.boxCode).map((value) => <option key={value.boxCode} value={value.boxCode}>{value.displayName || value.boxCode}</option>)}</select></label>
+    <label>上级容器<select value={draft.parentBoxCode || ""} onChange={(event) => setDraft({ ...draft, parentBoxCode: event.target.value, rackCode: event.target.value ? "" : draft.rackCode })}><option value="">无</option>{boxes.filter((value) => validContainerParent(boxes, draft.boxCode, value.boxCode)).map((value) => <option key={value.boxCode} value={value.boxCode}>{value.displayName || value.boxCode}</option>)}</select></label>
     <div className="editor-grid"><label>装载架层位<input value={draft.rackCode || ""} disabled={Boolean(draft.parentBoxCode)} onChange={(event) => setDraft({ ...draft, rackCode: event.target.value })} /></label><label>房间<input value={draft.roomName || ""} onChange={(event) => setDraft({ ...draft, roomName: event.target.value })} /></label></div>
     <div className="editor-grid"><label>柜体<input value={draft.cabinetName || ""} onChange={(event) => setDraft({ ...draft, cabinetName: event.target.value })} /></label><label>抽屉<input value={draft.drawerName || ""} onChange={(event) => setDraft({ ...draft, drawerName: event.target.value })} /></label></div>
     <label>备注<textarea rows={4} value={draft.note || ""} onChange={(event) => setDraft({ ...draft, note: event.target.value })} /></label>
-    <EditorActions saving={saving} onCancel={onCancel} />
-  </form>;
+    <EditorActions saving={saving} onCancel={() => cancel(onCancel)} />
+  </fieldset></form>;
 }
 
 function RackEditor({ rack, saving, onCancel, onSave }: { rack: StorageRack; saving: boolean; onCancel: () => void; onSave: (rack: StorageRack) => Promise<void> }) {
-  const [draft, setDraft] = useState(() => structuredClone(rack));
-  return <form className="entity-editor" onSubmit={(event) => { event.preventDefault(); void onSave(draft).catch(() => {}); }}>
+  const { draft, setDraft, dirty, save, cancel, notice } = useWarehouseDraft("rack", rack.rackCode, rack);
+  return <form className="entity-editor" data-dirty={dirty} aria-busy={saving} onSubmit={(event) => { event.preventDefault(); if (!saving) void save(onSave); }}><fieldset disabled={saving}>
+    {notice}
     <div className="detail-heading"><p className="eyebrow">EDIT RACK LAYER</p><span className="detail-code">{draft.rackCode}</span></div>
     <label>层位名称<input required value={draft.name || ""} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
     <p className="editor-help">层位编号不在网页端修改，避免已绑定容器失去位置。</p>
-    <EditorActions saving={saving} onCancel={onCancel} />
-  </form>;
+    <EditorActions saving={saving} onCancel={() => cancel(onCancel)} />
+  </fieldset></form>;
 }

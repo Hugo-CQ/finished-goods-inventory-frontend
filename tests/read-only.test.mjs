@@ -7,7 +7,8 @@ test("warehouse client authenticates and uses versioned metadata sync", async ()
 
   assert.match(page, /仓库管理/);
   assert.match(page, /可编辑/);
-  assert.match(page, /auth\/v1\/token\?grant_type=password/);
+  const session = await readFile(new URL("../app/warehouse-session.ts", import.meta.url), "utf8");
+  assert.match(session, /auth\/v1\/token\?grant_type=password/);
   assert.match(page, /访问密码/);
   assert.doesNotMatch(page, /HOUSEHOLD_PASSWORD|static\s+(?:let|const)\s+password/i);
   assert.match(page, /home_inventory_get_state/);

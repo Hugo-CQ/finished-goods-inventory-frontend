@@ -193,4 +193,37 @@ footer { min-height: 70px; display: flex; align-items: center; justify-content: 
   .login-shell { padding: 16px; }.login-card { padding: 30px 24px; border-radius: 18px; }.login-brand { margin-bottom: 34px; }.login-card h1 { font-size: 31px; }.app-shell { padding: 0 12px 20px; }.topbar { height: 70px; }.brand span, .cloud-state { display: none; }.topbar-meta { gap: 9px; }.hero { min-height: 0; padding: 34px 6px; }.hero h1 { font-size: 39px; }.hero-status { padding-left: 16px; }.metrics article { min-height: 88px; padding: 14px 10px; }.metric-icon { width: 36px; height: 36px; }.metrics b { font-size: 26px; }.metrics small { font-size: 10px; }.warehouse-panel { margin-top: 24px; border-radius: 14px; }.panel-head { padding: 22px 18px 16px; }.mode-tabs { padding: 0 18px; gap: 18px; }.filters { padding: 10px 18px; flex-wrap: wrap; }.filters > span { width: 100%; margin-left: 0; }.entity-row, .rack-group-header { grid-template-columns: 46px minmax(0,1fr) 74px; padding: 14px 16px; gap: 10px; }.thumb { width: 44px; height: 44px; }.entity-end strong, .rack-summary strong { font-size: 20px; }.rack-summary { gap: 8px; }.rack-layers { padding-left: 30px; padding-right: 8px; }.rack-layer-header { grid-template-columns: 12px 28px minmax(0,1fr) 86px; padding-right: 8px; gap: 7px; }.layer-count { gap: 5px; }.layer-containers { padding-left: 29px; }.rack-container-row { grid-template-columns: 16px minmax(0,1fr); padding-right: 8px; }.rack-container-row > span:last-child { display: none; }.container-contents { padding-left: 59px; padding-right: 10px; }.container-contents.compact { padding-left: 16px; }.container-item-row { grid-template-columns: 30px minmax(0,1fr) 78px; padding-left: 6px; padding-right: 6px; }.container-child-row { grid-template-columns: 26px minmax(0,1fr) 54px; padding-left: 6px; padding-right: 4px; }.container-child-edit { margin-right: 4px; }.detail-panel { padding: 22px 18px; }footer { padding: 0 4px; }
 }
 
-@media (prefers-reduced-motion: reduce) { .loader { animation: none; } }
+/* Keep the established palette; bring the working surface and feedback closer to the user. */
+.hero { min-height: 158px; padding: 30px 0; gap: 24px; }
+.hero h1 { font-size: clamp(32px, 3vw, 44px); }
+.hero-copy { margin-top: 12px; }
+.hero .eyebrow { margin-bottom: 9px; }
+.hero-status { padding-top: 4px; }
+.connection-notice { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; margin-bottom: 18px; border: 1px solid #d9c6a3; border-radius: 12px; background: #f9f2e4; color: #705629; font-size: 13px; line-height: 1.6; }
+.connection-notice button { flex-shrink: 0; min-height: 44px; border: 1px solid #d9c6a3; border-radius: 8px; background: #fff; padding: 8px 12px; cursor: pointer; }
+.draft-status, .draft-error { margin: 0; border-radius: 8px; padding: 10px 12px; font-size: 12px; line-height: 1.6; background: var(--green-soft); color: var(--green); }
+.draft-error { background: #f8e9e4; color: #813f30; }
+.editor-actions { position: sticky; bottom: 0; padding-bottom: max(12px, env(safe-area-inset-bottom)); background: #f8f8f3; z-index: 2; }
+.editor-actions button, .edit-button, .lock-button, .refresh-button { min-height: 44px; }
+.refresh-button { width: 44px; }
+button { touch-action: manipulation; transition: background-color 160ms ease-out, transform 120ms ease-out; }
+button:active:not(:disabled) { transform: scale(.98); }
+button:focus-visible, a:focus-visible { outline: 2px solid var(--green); outline-offset: 3px; }
+.entity-editor textarea { font: inherit; }
+@media (max-width: 900px) {
+  .hero { padding: 26px 0; grid-template-columns: 1fr; gap: 18px; }
+  .hero-status { padding: 0; border-left: 0; }
+  .hero-status strong { font-size: 18px; }
+}
+@media (max-width: 560px) {
+  .hero { padding: 24px 6px; }
+  .hero h1 { font-size: 32px; }
+  .topbar { height: auto; min-height: 76px; gap: 8px; }
+  .topbar-meta { flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+  .cloud-state { display: inline-flex; font-size: 11px; }
+  .entity-editor input, .entity-editor select, .entity-editor textarea { font-size: 16px; min-height: 44px; }
+  .connection-notice { align-items: flex-start; }
+  .container-contents { padding-left: 16px; }
+}
+@media (prefers-reduced-motion: reduce) { .loader { animation: none; } *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0ms !important; animation-duration: 0ms !important; } button:active:not(:disabled) { transform: none; } }
+.entity-editor > fieldset { border: 0; padding: 0; margin: 0; min-width: 0; display: grid; gap: 16px; }

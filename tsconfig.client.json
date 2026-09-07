@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "incremental": false, "types": ["node", "react", "react-dom"] },
+  "include": ["app/page.tsx", "app/warehouse-draft.ts", "app/warehouse-session.ts"],
+  "exclude": ["node_modules"]
+}
